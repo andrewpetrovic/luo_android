@@ -5,6 +5,8 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/fs.h>
+#include <linux/device.h>
+#include <linux/err.h>
 #include <asm/uaccess.h>
 
 #include "hello.h"
@@ -16,6 +18,7 @@ int hello_nr_devs = HELLO_NR_DEVS;
 int hello_quantum = HELLO_QUANTUM;
 int hello_qset = HELLO_QSET;
 
+struct class *hello_class;
 struct hello_android_dev *hello_dev;
 
 MODULE_AUTHOR("Andrea Ji");
@@ -61,7 +64,7 @@ int hello_open(struct inode *inode, struct file *filp){
     filp->private_data = dev;
     if ((filp->f_flags & O_ACCMODE) == O_WRONLY){
         if (down_interruptible(&dev->sem)){
-            printk(KERN_WARNING,"Debug by andrea: interrupt error when open");
+            printk(KERN_WARNING "Debug by andrea: interrupt error when open");
             return -ERESTARTSYS;
         }
         hello_trim(dev);
@@ -234,6 +237,9 @@ static void hello_setup_cdev(struct hello_android_dev *dev,
 void hello_cleanup_module(void){
     int i;
     dev_t devno = MKDEV(hello_major,hello_minor);
+    if(hello_class){
+        class_destroy(hello_class);
+    }
     if(hello_dev){
         for(i = 0; i < hello_nr_devs; i++){
             hello_trim(hello_dev + i);
@@ -247,6 +253,7 @@ void hello_cleanup_module(void){
 static int __init hello_init(void){
     int result, i;
     dev_t dev = 0;
+    struct device *temp = NULL;
 
     printk(KERN_ALERT "Debug by andrea: hello_init()");
 
@@ -287,8 +294,26 @@ static int __init hello_init(void){
         sema_init(&hello_dev[i].sem,1);
         hello_setup_cdev(&hello_dev[i],i);
     }
+
+    hello_class = class_create(THIS_MODULE,HELLO_DEVICE_CLASS_NAME);
+    if(IS_ERR(hello_class)){
+        result = PTR_ERR(temp);
+        printk(KERN_WARNING "Debug by andrea: Failed to create hello device");
+        goto destroy_cdev;
+    }
+
+    temp = device_create(hello_class, NULL, dev, "%s", HELLO_DEVICE_FILE_NAME);
+    if(IS_ERR(temp)) {
+        result = PTR_ERR(temp);
+        printk(KERN_ALERT"Failed to create hello device.");
+        goto destroy_class;
+    }
     return 0;
 
+destroy_cdev:
+    hello_cleanup_module();
+destroy_class:
+    class_destroy(hello_class);
 fail:
     printk(KERN_WARNING "Debug by andrea: module init fail, program will cleanup now");
     hello_cleanup_module();
