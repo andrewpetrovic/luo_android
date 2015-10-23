@@ -60,8 +60,10 @@ int hello_open(struct inode *inode, struct file *filp){
     dev = container_of(inode->i_cdev, struct hello_android_dev, cdev);
     filp->private_data = dev;
     if ((filp->f_flags & O_ACCMODE) == O_WRONLY){
-        if (down_interruptible(&dev->sem))
+        if (down_interruptible(&dev->sem)){
+            printk(KERN_WARNING,"Debug by andrea: interrupt error when open");
             return -ERESTARTSYS;
+        }
         hello_trim(dev);
         up(&dev->sem);
     }
@@ -76,17 +78,23 @@ int hello_release(struct inode *inode, struct file *filp){
 struct hello_qset *hello_follow(struct hello_android_dev *dev, int n){
     struct hello_qset *qs = dev->data;
     if(!qs){
+        printk(KERN_ALERT "Debug by andrea: need re-malloc first item of qset list");
         qs = dev->data = kmalloc(sizeof(struct hello_qset),GFP_KERNEL);
-        if(qs == NULL)
+        if(qs == NULL){
+            printk(KERN_WARNING "Debug by andrea: qset first item re-malloc fail ");
             return NULL;
+        }
         memset(qs, 0, sizeof(struct hello_qset));
     }
 
     while(n--){
         if(!qs->next) {
+            printk(KERN_ALERT "Debug by andrea: need re-malloc other qset item");
             qs -> next = kmalloc(sizeof(struct hello_qset),GFP_KERNEL);
-            if(qs->next == NULL)
+            if(qs->next == NULL){
+                printk(KERN_WARNING "Debug by andrea: other qset item re-malloc fail");
                 return NULL;
+            }
             memset(qs->next, 0, sizeof(struct hello_qset));
         }
         qs = qs->next;
@@ -107,12 +115,18 @@ ssize_t hello_read(struct file *filp,
     int item, s_pos, q_pos, rest;
     ssize_t retval = 0;
 
-    if(down_interruptible(&dev->sem))
+    if(down_interruptible(&dev->sem)){
+        printk(KERN_WARNING "Debug by andrea: interrupt fail before read");
         return -ERESTARTSYS;
-    if(*f_pos >= dev->size)
+    }
+    if(*f_pos >= dev->size){
+        printk(KERN_WARNING "Debug by andrea: read position is overflow");
         goto out;
-    if(*f_pos + count > dev->size)
+    }
+    if(*f_pos + count > dev->size){
+        printk(KERN_ALERT "Debug by andrea: read count is too much,need re-calculate");
         count = dev->size - *f_pos;
+    }
     item = (long)*f_pos / itemsize;
     rest = (long)*f_pos % itemsize;
     s_pos = rest / quantum;
@@ -120,13 +134,18 @@ ssize_t hello_read(struct file *filp,
 
     dptr = hello_follow(dev, item);
 
-    if(dptr == NULL || !dptr->data || !dptr->data[s_pos])
+    if(dptr == NULL || !dptr->data || !dptr->data[s_pos]){
+        printk(KERN_WARNING "Debug by andrea: qset is null, or data point is null, or quantum is null");
         goto out;
+    }
 
-    if(count > quantum - q_pos)
+    if(count > quantum - q_pos){
+        printk(KERN_ALERT "Debug by andrea: read only up to the end of this quantum");
         count = quantum - q_pos;
+    }
 
     if(copy_to_user(buf, dptr->data[s_pos] + q_pos, count)){
+        printk(KERN_WARNING "Debug by andrea: read fail");
         retval = -EFAULT;
         goto out;
     }
@@ -163,26 +182,37 @@ ssize_t hello_write(struct file *filp,
     if(dptr == NULL)
         goto out;
     if(!dptr->data){
+        printk(KERN_ALERT "Debug by andrea: need re-malloc qset->data");
         dptr->data = kmalloc(qset * sizeof(char *), GFP_KERNEL);
-        if(!dptr -> data)
+        if(!dptr -> data){
+            printk(KERN_WARNING "Debug by andrea: re-malloc qset->data fail");
             goto out;
+        }
         memset(dptr->data,0,qset * sizeof(char *));
     }
     if (!dptr->data[s_pos]) {
+        printk(KERN_ALERT "Debug by andrea: need re-malloc quantum");
         dptr->data[s_pos] = kmalloc(quantum, GFP_KERNEL);
-        if (!dptr->data[s_pos])
+        if (!dptr->data[s_pos]){
+            printk(KERN_WARNING "Debug by andrea: re-malloc quantum fail");
             goto out;
+        }
     }
-    if(count > quantum - q_pos)
+    if(count > quantum - q_pos){
+        printk(KERN_ALERT "Debug by andrea: write only up to the end of this quantum");
         count = quantum -q_pos;
+    }
     if(copy_from_user(dptr->data[s_pos]+q_pos,buf,count)){
+        printk(KERN_WARNING "Debug by andrea: write fail");
         retval = -EFAULT;
         goto out;
     }
     *f_pos += count;
     retval = count;
-    if(dev->size < *f_pos)
+    if(dev->size < *f_pos){
+        printk(KERN_ALERT "Debug by andrea: update the size");
         dev->size = *f_pos;
+    }
 out:
     up(&dev->sem);
     return retval;
@@ -209,10 +239,8 @@ void hello_cleanup_module(void){
             hello_trim(hello_dev + i);
             cdev_del(&hello_dev[i].cdev);
         }
-        /*cdev_del(&hello_dev->cdev);*/
         kfree(hello_dev);
     }
-    /*kfree(hello_dev);*/
     unregister_chrdev_region(devno,hello_nr_devs);
 }
 
